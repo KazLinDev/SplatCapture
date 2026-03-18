@@ -59,6 +59,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "SplatCapture|PointCloud")
 	void PushToNiagara(UNiagaraComponent* NiagaraComp);
 
+	/** DeacitvatesNiagara */
+	UFUNCTION(BlueprintCallable, Category = "SplatCapture")
+	void DeactivateNiagara(UNiagaraComponent* NiagaraComp);
+
 	UFUNCTION(BlueprintPure, Category = "SplatCapture|PointCloud")
 	int32 GetCapturedPointCount() const { return CapturedPositions.Num(); }
 

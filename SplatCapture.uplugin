@@ -1,10 +1,10 @@
 {
 	"FileVersion": 3,
-	"Version": 1,
-	"VersionName": "1.0",
+	"Version": 2,
+	"VersionName": "2.0",
 	"FriendlyName": "SplatCapture",
 	"Description": "",
-	"Category": "Other",
+	"Category": "EditorUtility",
 	"CreatedBy": "KaepTech",
 	"CreatedByURL": "",
 	"DocsURL": "",
@@ -17,7 +17,7 @@
 	"Modules": [
 		{
 			"Name": "SplatCapture",
-			"Type": "UncookedOnly",
+			"Type": "Editor",
 			"LoadingPhase": "Default"
 		}
 	],

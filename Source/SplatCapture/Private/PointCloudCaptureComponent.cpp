@@ -325,6 +325,25 @@ void UPointCloudCaptureComponent::PushToNiagara(UNiagaraComponent* NiagaraComp)
 }
 
 // ============================================================================
+// Deactivate Niagara
+// ============================================================================
+
+void UPointCloudCaptureComponent::DeactivateNiagara(UNiagaraComponent* NiagaraComp)
+{
+	if (!NiagaraComp) return;
+
+	// Clear the array first — this frees the memory
+	TArray<FVector> Empty;
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
+		NiagaraComp, FName("PositionArray"), Empty);
+
+	NiagaraComp->SetVariableInt(FName("PointCount"), 0);
+	NiagaraComp->Deactivate();
+}
+
+
+
+// ============================================================================
 //  Export
 // ============================================================================
 

@@ -6,8 +6,7 @@ A Unreal Engine 5 plugin that automatically generates synthetic training dataset
 
 ## Requirements
 
-- Unreal Engine 5.3 or newer
-- A C++ enabled Unreal project (required for plugins with C++ code)
+- Unreal Engine 5.3 currently supported
 
 ---
 
