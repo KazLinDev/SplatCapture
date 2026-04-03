@@ -6,6 +6,10 @@
 #include "Misc/FileHelper.h"
 #include "HAL/FileManager.h"
 
+// ============================================================================
+// OpenFolderPicker
+// ============================================================================
+
 bool USplatCaptureFunctionLibrary::OpenFolderPicker(FString DialogTitle, FString& OutSelectedDirectory)
 {
 	IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
@@ -17,6 +21,10 @@ bool USplatCaptureFunctionLibrary::OpenFolderPicker(FString DialogTitle, FString
 	}
 	return DesktopPlatform->OpenDirectoryDialog(ParentWindowHandle, DialogTitle, TEXT(""), OutSelectedDirectory);
 }
+
+// ============================================================================
+// ExportColmapCameras
+// ============================================================================
 
 bool USplatCaptureFunctionLibrary::ExportColmapCameras(UCineCameraComponent* CameraComponent, FIntPoint Resolution, FString SavePath)
 {
@@ -34,6 +42,10 @@ bool USplatCaptureFunctionLibrary::ExportColmapCameras(UCineCameraComponent* Cam
 
 	return FFileHelper::SaveStringToFile(Content, *SavePath);
 }
+
+// ============================================================================
+// ExportColmapImages
+// ============================================================================
 
 bool USplatCaptureFunctionLibrary::ExportColmapImages(const TArray<FSplatCameraFrame>& CapturedFrames, FString SavePath, bool bIsFirstFrame)
 {
@@ -57,6 +69,10 @@ bool USplatCaptureFunctionLibrary::ExportColmapImages(const TArray<FSplatCameraF
 
 	return FFileHelper::SaveStringToFile(Content, *SavePath, FFileHelper::EEncodingOptions::AutoDetect, &IFileManager::Get(), FILEWRITE_Append);
 }
+
+// ============================================================================
+// ConvertUETransformToColmapExtrinsics
+// ============================================================================
 
 void USplatCaptureFunctionLibrary::ConvertUETransformToColmapExtrinsics(const FTransform& CameraWorldTransform, double& OutQW, double& OutQX, double& OutQY, double& OutQZ, double& OutTX, double& OutTY, double& OutTZ)
 {
@@ -85,6 +101,10 @@ void USplatCaptureFunctionLibrary::ConvertUETransformToColmapExtrinsics(const FT
 	OutTX = T_col.X; OutTY = T_col.Y; OutTZ = T_col.Z;
 }
 
+// ============================================================================
+// ExportColmap3DPoints
+// ============================================================================
+
 bool USplatCaptureFunctionLibrary::ExportColmapPoints3D(const TArray<FVector>& Positions, FString SavePath)
 {
 	FString Content = TEXT("# POINT3D_ID, X, Y, Z, R, G, B, ERROR\n");
@@ -93,6 +113,10 @@ bool USplatCaptureFunctionLibrary::ExportColmapPoints3D(const TArray<FVector>& P
 	}
 	return FFileHelper::SaveStringToFile(Content, *SavePath);
 }
+
+// ============================================================================
+// WriteBinaryPLY
+// ============================================================================
 
 bool USplatCaptureFunctionLibrary::WriteBinaryPLY(const TArray<FVector>& Positions, FString SavePath)
 {
@@ -110,6 +134,10 @@ bool USplatCaptureFunctionLibrary::WriteBinaryPLY(const TArray<FVector>& Positio
 	}
 	return FFileHelper::SaveArrayToFile(Buffer, *SavePath);
 }
+
+// ============================================================================
+// MakeFrameFilename
+// ============================================================================
 
 FString USplatCaptureFunctionLibrary::MakeFrameFilename(FString Prefix, int32 Index, int32 PadWidth, FString Extension)
 {
