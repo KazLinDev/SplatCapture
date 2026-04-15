@@ -74,4 +74,4 @@ Open your project in Unreal Engine, then go to:
 
 ## License
 
-MIT — free to use, modify, and distribute.
+Copyright (c) 2026 Linus Käpplinger. All rights reserved.
