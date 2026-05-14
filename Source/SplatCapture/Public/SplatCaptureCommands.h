@@ -1,4 +1,4 @@
-// Copyright (c) 2025, KazTech. All rights reserverd.
+// Copyright (c) 2026, KaepTech. All rights reserved.
 
 #pragma once
 
@@ -9,15 +9,18 @@
 class FSplatCaptureCommands : public TCommands<FSplatCaptureCommands>
 {
 public:
-
 	FSplatCaptureCommands()
-		: TCommands<FSplatCaptureCommands>(TEXT("SplatCapture"), NSLOCTEXT("Contexts", "SplatCapture", "SplatCapture Plugin"), NAME_None, FSplatCaptureStyle::GetStyleSetName())
+		: TCommands<FSplatCaptureCommands>(
+			TEXT("SplatCapture"),
+			NSLOCTEXT("Contexts", "SplatCapture", "SplatCapture Plugin"),
+			NAME_None,
+			FSplatCaptureStyle::GetStyleSetName())
 	{
 	}
 
-	// TCommands<> interface
+	// TCommands<>
+
 	virtual void RegisterCommands() override;
 
-public:
-	TSharedPtr< FUICommandInfo > PluginAction;
+	TSharedPtr<FUICommandInfo> PluginAction;
 };

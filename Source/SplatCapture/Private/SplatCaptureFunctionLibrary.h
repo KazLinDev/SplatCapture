@@ -1,4 +1,4 @@
-// Copyright KaepTech, Inc. All Rights Reserved.
+// Copyright (c) 2026, KaepTech. All rights reserved.
 
 #pragma once
 
@@ -36,7 +36,7 @@ public:
 	static bool ExportColmapCameras(UCineCameraComponent* CameraComponent, FIntPoint Resolution, FString SavePath);
 
 	UFUNCTION(BlueprintCallable, Category = "SplatCapture|COLMAP")
-	static bool ExportColmapImages(const TArray<FSplatCameraFrame>& CapturedFrames, FString SavePath, bool bIsFirstFrame);
+	static bool ExportColmapImages(const TArray<FSplatCameraFrame>& CapturedFrames, FString SavePath);
 
 	UFUNCTION(BlueprintCallable, Category = "SplatCapture|COLMAP")
 	static bool ExportColmapPoints3D(const TArray<FVector>& Positions, FString SavePath);
@@ -47,7 +47,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "SplatCapture|Utility")
 	static FString MakeFrameFilename(FString Prefix, int32 Index, int32 PadWidth, FString Extension);
 
-	// Core Math Function
 	static void ConvertUETransformToColmapExtrinsics(
 		const FTransform& CameraWorldTransform,
 		double& OutQW, double& OutQX, double& OutQY, double& OutQZ,

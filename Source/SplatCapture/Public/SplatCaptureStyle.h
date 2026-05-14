@@ -1,4 +1,4 @@
-// Copyright (c) 2025, KazTech. All rights reserverd.
+// Copyright (c) 2026, KaepTech. All rights reserved.
 
 #pragma once
 
@@ -8,7 +8,6 @@
 class FSplatCaptureStyle
 {
 public:
-
 	static void Initialize();
 	static void Shutdown();
 	static void ReloadTextures();
@@ -16,10 +15,6 @@ public:
 	static FName GetStyleSetName();
 
 private:
-
-	static TSharedRef< class FSlateStyleSet > Create();
-
-private:
-
-	static TSharedPtr< class FSlateStyleSet > StyleInstance;
+	static TSharedRef<class FSlateStyleSet> Create();
+	static TSharedPtr<class FSlateStyleSet> StyleInstance;
 };

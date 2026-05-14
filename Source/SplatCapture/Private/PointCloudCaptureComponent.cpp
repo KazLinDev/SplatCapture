@@ -11,6 +11,8 @@
 #include "StaticMeshAttributes.h"
 #include "NiagaraComponent.h"
 #include "NiagaraDataInterfaceArrayFunctionLibrary.h"
+#include "CineCameraComponent.h"
+#include "Async/ParallelFor.h"
 #include "SplatCaptureFunctionLibrary.h"
 
 UPointCloudCaptureComponent::UPointCloudCaptureComponent()
@@ -18,188 +20,237 @@ UPointCloudCaptureComponent::UPointCloudCaptureComponent()
 	PrimaryComponentTick.bCanEverTick = false;
 }
 
-// ============================================================================
-//  Generate Point Cloud
-// ============================================================================
+// Generate Point Cloud
 
-void UPointCloudCaptureComponent::GeneratePointCloud(UBoxComponent* VolumeBox)
+void UPointCloudCaptureComponent::GeneratePointCloud(
+	UBoxComponent* VolumeBox,
+	const TArray<FTransform>& CameraTransforms,
+	AActor* CameraActor,
+	bool bUseSurfaceSampling,
+	bool bUseCameraTracing)
 {
-	if (!VolumeBox)
+	CapturedPositions.Reset();
+
+	if (!bUseSurfaceSampling && !bUseCameraTracing)
 	{
-		UE_LOG(LogTemp, Error, TEXT("PointCloudCapture: VolumeBox is null."));
+		UE_LOG(LogTemp, Warning, TEXT("PointCloudCapture: Both passes off, nothing to do."));
 		return;
 	}
 
-	CapturedPositions.Reset();
+	if (bUseSurfaceSampling)
+	{
+		if (!VolumeBox)
+		{
+			UE_LOG(LogTemp, Error, TEXT("PointCloudCapture: surface pass needs VolumeBox. Skipping."));
+		}
+		else
+		{
+			RunSurfaceSampling(VolumeBox, CapturedPositions);
+		}
+	}
 
+	if (bUseCameraTracing)
+	{
+		RunCameraTracing(CameraTransforms, CameraActor, CapturedPositions);
+	}
+
+	if (CapturedPositions.Num() > MaxPoints)
+	{
+		CapturedPositions.SetNum(MaxPoints);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("PointCloudCapture: Final cloud = %d points (surface=%s, cameras=%s)."),
+		CapturedPositions.Num(),
+		bUseSurfaceSampling ? TEXT("on") : TEXT("off"),
+		bUseCameraTracing ? TEXT("on") : TEXT("off"));
+}
+
+// Surface Pass
+
+void UPointCloudCaptureComponent::RunSurfaceSampling(UBoxComponent* VolumeBox, TArray<FVector>& OutPositions)
+{
 	const FVector BoxCenter = VolumeBox->GetComponentLocation();
 	const FVector BoxExtent = VolumeBox->GetScaledBoxExtent();
-	const FVector BoxMin = BoxCenter - BoxExtent;
-	const FVector BoxMax = BoxCenter + BoxExtent;
+	const FVector BoxMin    = BoxCenter - BoxExtent;
+	const FVector BoxMax    = BoxCenter + BoxExtent;
 	const FVector VolumeSize = BoxMax - BoxMin;
 
-	// ── Pass 1: Static Mesh Surface Sampling ───────────────────────────
+	// Find all mesh components that overlap the volume.
+	TArray<UStaticMeshComponent*> MeshComponents;
 
-	if (bPointsFromSurface)
+	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
 	{
-		TArray<UStaticMeshComponent*> MeshComponents;
+		AActor* Actor = *It;
+		if (!Actor || Actor == GetOwner()) continue;
 
-		for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+		TArray<UStaticMeshComponent*> Comps;
+		Actor->GetComponents<UStaticMeshComponent>(Comps);
+
+		for (UStaticMeshComponent* Comp : Comps)
 		{
-			AActor* Actor = *It;
-			if (!Actor || Actor == GetOwner()) continue;
+			if (!Comp || !Comp->GetStaticMesh() || !Comp->IsVisible()) continue;
 
-			TArray<UStaticMeshComponent*> Comps;
-			Actor->GetComponents<UStaticMeshComponent>(Comps);
+			const FBoxSphereBounds B = Comp->Bounds;
+			const FVector MMin = B.Origin - B.BoxExtent;
+			const FVector MMax = B.Origin + B.BoxExtent;
 
-			for (UStaticMeshComponent* Comp : Comps)
-			{
-				if (!Comp || !Comp->GetStaticMesh() || !Comp->IsVisible()) continue;
+			// No overlap with volume.
+			if (MMin.X > BoxMax.X || MMax.X < BoxMin.X ||
+				MMin.Y > BoxMax.Y || MMax.Y < BoxMin.Y ||
+				MMin.Z > BoxMax.Z || MMax.Z < BoxMin.Z) continue;
 
-				const FBoxSphereBounds B = Comp->Bounds;
-				const FVector MMin = B.Origin - B.BoxExtent;
-				const FVector MMax = B.Origin + B.BoxExtent;
+			// Skip huge meshes (sky spheres etc).
+			const FVector MSize = MMax - MMin;
+			if (MSize.X > VolumeSize.X * MeshSizeFilterMultiplier ||
+				MSize.Y > VolumeSize.Y * MeshSizeFilterMultiplier ||
+				MSize.Z > VolumeSize.Z * MeshSizeFilterMultiplier) continue;
 
-				// Skip if no overlap.
-				if (MMin.X > BoxMax.X || MMax.X < BoxMin.X ||
-					MMin.Y > BoxMax.Y || MMax.Y < BoxMin.Y ||
-					MMin.Z > BoxMax.Z || MMax.Z < BoxMin.Z) continue;
-
-				// Skip giant meshes (sky spheres, etc).
-				const FVector MSize = MMax - MMin;
-				if (MSize.X > VolumeSize.X * MeshSizeFilterMultiplier ||
-					MSize.Y > VolumeSize.Y * MeshSizeFilterMultiplier ||
-					MSize.Z > VolumeSize.Z * MeshSizeFilterMultiplier) continue;
-
-				MeshComponents.Add(Comp);
-			}
-		}
-
-		UE_LOG(LogTemp, Log, TEXT("PointCloudCapture: Found %d static meshes."),
-			MeshComponents.Num());
-
-		if (MeshComponents.Num() > 0)
-		{
-			float TotalArea = 0.0f;
-			TArray<float> Areas;
-			Areas.SetNum(MeshComponents.Num());
-
-			for (int32 i = 0; i < MeshComponents.Num(); ++i)
-			{
-				Areas[i] = ComputeMeshSurfaceArea(MeshComponents[i]);
-				TotalArea += Areas[i];
-			}
-
-			const float AreaSqM = TotalArea / 10000.0f;
-			const int32 Target = FMath::Clamp(
-				static_cast<int32>(AreaSqM * PointDensityPerSqMeter), 100, MaxPoints);
-
-			CapturedPositions.Reserve(Target);
-
-			for (int32 i = 0; i < MeshComponents.Num(); ++i)
-			{
-				const int32 N = (TotalArea > 0.0f)
-					? FMath::RoundToInt((Areas[i] / TotalArea) * Target)
-					: Target / MeshComponents.Num();
-
-				if (N > 0)
-					SampleMeshSurface(MeshComponents[i], N, CapturedPositions);
-			}
+			MeshComponents.Add(Comp);
 		}
 	}
 
-	// ── Pass 2: Line Traces  ────────────────
+	UE_LOG(LogTemp, Log, TEXT("PointCloudCapture: Surface — found %d static meshes."), MeshComponents.Num());
 
-	if (bPointsFromTraces)
+	if (MeshComponents.Num() == 0) return;
+
+	// Sum surface area, then split target points by area ratio.
+	float TotalArea = 0.0f;
+	TArray<float> Areas;
+	Areas.SetNum(MeshComponents.Num());
+
+	for (int32 i = 0; i < MeshComponents.Num(); ++i)
 	{
-		SampleByLineTraces(BoxMin, BoxMax, CapturedPositions);
+		Areas[i] = ComputeMeshSurfaceArea(MeshComponents[i]);
+		TotalArea += Areas[i];
 	}
 
-	// ── Cull points outside volume ─────────────────────────────────────
+	const float AreaSqM = TotalArea / 10000.0f;
+	const int32 Target = FMath::Clamp(
+		static_cast<int32>(AreaSqM * PointDensityPerSqMeter), 100, MaxPoints);
 
-	for (int32 i = CapturedPositions.Num() - 1; i >= 0; --i)
+	OutPositions.Reserve(OutPositions.Num() + Target);
+
+	const int32 PreCount = OutPositions.Num();
+
+	for (int32 i = 0; i < MeshComponents.Num(); ++i)
 	{
-		const FVector& P = CapturedPositions[i];
+		const int32 N = (TotalArea > 0.0f)
+			? FMath::RoundToInt((Areas[i] / TotalArea) * Target)
+			: Target / MeshComponents.Num();
+
+		if (N > 0)
+			SampleMeshSurface(MeshComponents[i], N, OutPositions);
+	}
+
+	// Drop points outside the box (meshes can stick past the wall).
+	for (int32 i = OutPositions.Num() - 1; i >= PreCount; --i)
+	{
+		const FVector& P = OutPositions[i];
 		if (P.X < BoxMin.X || P.X > BoxMax.X ||
 			P.Y < BoxMin.Y || P.Y > BoxMax.Y ||
 			P.Z < BoxMin.Z || P.Z > BoxMax.Z)
 		{
-			CapturedPositions.RemoveAtSwap(i);
+			OutPositions.RemoveAtSwap(i, 1, false);
 		}
 	}
 
-	if (CapturedPositions.Num() > MaxPoints)
-		CapturedPositions.SetNum(MaxPoints);
-
-	UE_LOG(LogTemp, Log, TEXT("PointCloudCapture: Generated %d points."),
-		CapturedPositions.Num());
+	UE_LOG(LogTemp, Log, TEXT("PointCloudCapture: Surface pass added %d points."),
+		OutPositions.Num() - PreCount);
 }
 
-// ============================================================================
-//  Line Trace Sampling (6 directions)
-// ============================================================================
+// Camera Pass
 
-void UPointCloudCaptureComponent::SampleByLineTraces(
-	const FVector& BoxMin, const FVector& BoxMax,
+void UPointCloudCaptureComponent::RunCameraTracing(
+	const TArray<FTransform>& CameraTransforms,
+	AActor* CameraActor,
 	TArray<FVector>& OutPositions)
 {
 	UWorld* World = GetWorld();
-	if (!World) return;
+	if (!World)
+	{
+		UE_LOG(LogTemp, Error, TEXT("PointCloudCapture: Camera tracing — no world."));
+		return;
+	}
 
-	const FVector Size = BoxMax - BoxMin;
-	const int32 Res = FMath::Max(TraceGridResolution, 10);
+	if (!CameraActor)
+	{
+		UE_LOG(LogTemp, Error, TEXT("PointCloudCapture: Camera tracing — null CameraActor."));
+		return;
+	}
+
+	if (CameraTransforms.Num() == 0 || RaysPerCamera <= 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("PointCloudCapture: Camera tracing — no transforms or zero rays."));
+		return;
+	}
+
+	UCineCameraComponent* CameraComp = CameraActor->FindComponentByClass<UCineCameraComponent>();
+	if (!CameraComp)
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("PointCloudCapture: No CineCameraComponent on actor %s. Skipping camera pass."),
+			*CameraActor->GetName());
+		return;
+	}
+
+	// Same fields ExportColmapCameras reads — trace frustum and exported camera stay in sync.
+	const float Focal   = CameraComp->CurrentFocalLength;
+	const float SensorW = CameraComp->Filmback.SensorWidth;
+	const float SensorH = CameraComp->Filmback.SensorHeight;
+	if (Focal <= 0.0f || SensorW <= 0.0f || SensorH <= 0.0f)
+	{
+		UE_LOG(LogTemp, Error,
+			TEXT("PointCloudCapture: %s has bad focal/sensor (Focal=%f, SensorW=%f, SensorH=%f)."),
+			*CameraActor->GetName(), Focal, SensorW, SensorH);
+		return;
+	}
+
+	// UE camera-local: X = forward, Y = right, Z = up.
+	// Ray for NDC (u, v) in [-1, 1]² has direction (1, u·tan(HFOV/2), v·tan(VFOV/2)).
+	const float TanHalfH = (SensorW * 0.5f) / Focal;
+	const float TanHalfV = (SensorH * 0.5f) / Focal;
+	const float MaxDist  = FMath::Max(MaxTraceDistance, 1.0f);
+	const int32 N        = FMath::Max(RaysPerCamera, 1);
 
 	FCollisionQueryParams Params;
 	Params.bTraceComplex = true;
 	Params.AddIgnoredActor(GetOwner());
+	Params.AddIgnoredActor(CameraActor);
 
-	int32 Hits = 0;
+	const int32 PreCount = OutPositions.Num();
+	OutPositions.Reserve(PreCount + CameraTransforms.Num() * N);
 
-	auto TraceGrid = [&](int32 AxisA, int32 AxisB, int32 AxisTrace, bool bPositiveDir)
+	int32 TotalHits = 0;
+
+	for (const FTransform& CamXform : CameraTransforms)
 	{
-		const float StepA = Size[AxisA] / Res;
-		const float StepB = Size[AxisB] / Res;
+		const FVector Origin = CamXform.GetLocation();
 
-		for (int32 ia = 0; ia < Res; ++ia)
+		for (int32 i = 0; i < N; ++i)
 		{
-			for (int32 ib = 0; ib < Res; ++ib)
+			// Random NDC point inside the frustum.
+			const float u = FMath::FRandRange(-1.0f, 1.0f);
+			const float v = FMath::FRandRange(-1.0f, 1.0f);
+
+			const FVector LocalDir = FVector(1.0f, u * TanHalfH, v * TanHalfV).GetSafeNormal();
+			const FVector WorldDir = CamXform.TransformVectorNoScale(LocalDir);
+			const FVector End      = Origin + WorldDir * MaxDist;
+
+			FHitResult Hit;
+			if (World->LineTraceSingleByChannel(Hit, Origin, End, ECC_Visibility, Params))
 			{
-				FVector Start, End;
-				Start[AxisA] = BoxMin[AxisA] + ia * StepA + FMath::FRand() * StepA;
-				Start[AxisB] = BoxMin[AxisB] + ib * StepB + FMath::FRand() * StepB;
-				Start[AxisTrace] = bPositiveDir ? BoxMin[AxisTrace] : BoxMax[AxisTrace];
-
-				End = Start;
-				End[AxisTrace] = bPositiveDir ? BoxMax[AxisTrace] : BoxMin[AxisTrace];
-
-				TArray<FHitResult> HitResults;
-				if (World->LineTraceMultiByChannel(HitResults, Start, End,
-					ECC_Visibility, Params))
-				{
-					for (const FHitResult& Hit : HitResults)
-					{
-						OutPositions.Add(Hit.ImpactPoint);
-						Hits++;
-					}
-				}
+				OutPositions.Add(Hit.ImpactPoint);
+				++TotalHits;
 			}
 		}
-	};
+	}
 
-	TraceGrid(1, 2, 0, true);   // +X
-	TraceGrid(1, 2, 0, false);  // -X
-	TraceGrid(0, 2, 1, true);   // +Y
-	TraceGrid(0, 2, 1, false);  // -Y
-	TraceGrid(0, 1, 2, true);   // +Z
-	TraceGrid(0, 1, 2, false);  // -Z
-
-	UE_LOG(LogTemp, Log, TEXT("PointCloudCapture: %d trace hits from %d rays."),
-		Hits, Res * Res * 6);
+	UE_LOG(LogTemp, Log,
+		TEXT("PointCloudCapture: Camera pass — %d cameras × %d rays → %d hits (focal %.2f mm)."),
+		CameraTransforms.Num(), N, TotalHits, Focal);
 }
 
-// ============================================================================
-//  Mesh Surface Sampling (Barycentric, FMeshDescription)
-// ============================================================================
+// Mesh Surface Sampling (barycentric, area-weighted)
 
 void UPointCloudCaptureComponent::SampleMeshSurface(
 	UStaticMeshComponent* MeshComp, int32 NumSamples,
@@ -219,7 +270,7 @@ void UPointCloudCaptureComponent::SampleMeshSurface(
 
 	const FTransform Xform = MeshComp->GetComponentTransform();
 
-	// Build triangle data + area-weighted CDF.
+	// Cache triangles + build area-weighted CDF.
 	struct FTri { FVector3f A, B, C; };
 	TArray<FTri> Tris;
 	Tris.SetNumUninitialized(NumTri);
@@ -246,10 +297,9 @@ void UPointCloudCaptureComponent::SampleMeshSurface(
 	if (Total <= 0.0f) return;
 	for (int32 t = 0; t < NumTri; ++t) CDF[t] /= Total;
 
-	// Sample random points on triangles.
 	for (int32 s = 0; s < NumSamples; ++s)
 	{
-		// Pick triangle weighted by area (binary search CDF).
+		// Pick triangle by area (binary search the CDF).
 		const float R = FMath::FRand();
 		int32 Lo = 0, Hi = NumTri - 1;
 		while (Lo < Hi)
@@ -258,7 +308,7 @@ void UPointCloudCaptureComponent::SampleMeshSurface(
 			CDF[M] < R ? Lo = M + 1 : Hi = M;
 		}
 
-		// Random barycentric coordinates.
+		// Random point inside the triangle (fold if outside).
 		float U = FMath::FRand(), V = FMath::FRand();
 		if (U + V > 1.0f) { U = 1.0f - U; V = 1.0f - V; }
 
@@ -268,10 +318,7 @@ void UPointCloudCaptureComponent::SampleMeshSurface(
 	}
 }
 
-// ============================================================================
-//  Surface Area (FMeshDescription)
-// ============================================================================
-
+// Mesh Surface  Sampling
 float UPointCloudCaptureComponent::ComputeMeshSurfaceArea(
 	UStaticMeshComponent* MeshComp)
 {
@@ -302,50 +349,111 @@ float UPointCloudCaptureComponent::ComputeMeshSurfaceArea(
 	return Area;
 }
 
-// ============================================================================
-//  Push to Niagara
-// ============================================================================
-
+// Push To Niagara
 void UPointCloudCaptureComponent::PushToNiagara(UNiagaraComponent* NiagaraComp)
 {
 	if (!NiagaraComp || CapturedPositions.Num() == 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("PointCloudCapture: Cannot push — null or empty."));
+		UE_LOG(LogTemp, Warning, TEXT("PointCloudCapture: PushToNiagara — null component or empty cloud."));
 		return;
 	}
+	const float Radius    = FMath::Max(HeatmapRadius, 1.0f);
+	const float RadiusSq  = Radius * Radius;
+	const float InvRadius = 1.0f / Radius;
 
+	// Spatial index: voxel → indices of points in it.
+	TMap<FIntVector, TArray<int32>> Index;
+	Index.Reserve(CapturedPositions.Num() / 4);
+
+	for (int32 i = 0; i < CapturedPositions.Num(); ++i)
+	{
+		const FVector& P = CapturedPositions[i];
+		const FIntVector V(
+			FMath::FloorToInt(P.X * InvRadius),
+			FMath::FloorToInt(P.Y * InvRadius),
+			FMath::FloorToInt(P.Z * InvRadius));
+		Index.FindOrAdd(V).Add(i);
+	}
+
+	// Per-point neighbor count. Parallel: each iteration writes one slot, reads frozen index.
+	TArray<int32> Counts;
+	Counts.SetNumZeroed(CapturedPositions.Num());
+
+	ParallelFor(CapturedPositions.Num(), [&](int32 i)
+	{
+		const FVector& P = CapturedPositions[i];
+		const FIntVector V(
+			FMath::FloorToInt(P.X * InvRadius),
+			FMath::FloorToInt(P.Y * InvRadius),
+			FMath::FloorToInt(P.Z * InvRadius));
+
+		int32 Count = 0;
+		for (int32 dz = -1; dz <= 1; ++dz)
+		for (int32 dy = -1; dy <= 1; ++dy)
+		for (int32 dx = -1; dx <= 1; ++dx)
+		{
+			const TArray<int32>* Bucket = Index.Find(FIntVector(V.X + dx, V.Y + dy, V.Z + dz));
+			if (!Bucket) continue;
+			for (int32 j : *Bucket)
+			{
+				if (FVector::DistSquared(P, CapturedPositions[j]) < RadiusSq)
+				{
+					++Count;
+				}
+			}
+		}
+		Counts[i] = Count;
+	});
+
+	int32 MaxCount = 0;
+	for (int32 c : Counts)
+	{
+		if (c > MaxCount) MaxCount = c;
+	}
+	const float InvMax = MaxCount > 0 ? 1.0f / float(MaxCount) : 1.0f;
+
+	TArray<float> Density;
+	Density.SetNumUninitialized(CapturedPositions.Num());
+	for (int32 i = 0; i < CapturedPositions.Num(); ++i)
+	{
+		Density[i] = float(Counts[i]) * InvMax;
+	}
+
+	// Push positions + heatmap + count, then activate.
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
 		NiagaraComp, FName("PositionArray"), CapturedPositions);
+
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(
+		NiagaraComp, FName("heatmap"), Density);
 
 	NiagaraComp->SetVariableInt(FName("PointCount"), CapturedPositions.Num());
 	NiagaraComp->Activate(true);
 
-	UE_LOG(LogTemp, Log, TEXT("PointCloudCapture: Pushed %d points to Niagara."),
-		CapturedPositions.Num());
+	UE_LOG(LogTemp, Log,
+		TEXT("PointCloudCapture: Pushed %d points to Niagara (radius %.1f cm, max neighbors %d)."),
+		CapturedPositions.Num(), Radius, MaxCount);
 }
 
-// ============================================================================
 // Deactivate Niagara
-// ============================================================================
 
 void UPointCloudCaptureComponent::DeactivateNiagara(UNiagaraComponent* NiagaraComp)
 {
 	if (!NiagaraComp) return;
 
-	// Clear the array first — this frees the memory
-	TArray<FVector> Empty;
+	// Clear both arrays so Niagara frees the memory.
+	TArray<FVector> EmptyVec;
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(
-		NiagaraComp, FName("PositionArray"), Empty);
+		NiagaraComp, FName("PositionArray"), EmptyVec);
+
+	TArray<float> EmptyFloat;
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(
+		NiagaraComp, FName("heatmap"), EmptyFloat);
 
 	NiagaraComp->SetVariableInt(FName("PointCount"), 0);
 	NiagaraComp->Deactivate();
 }
 
-
-
-// ============================================================================
-//  Export
-// ============================================================================
+// Export
 
 void UPointCloudCaptureComponent::ExportToPLY(const FString& SavePath)
 {

@@ -1,32 +1,23 @@
-// Copyright (c) 2025, KazTech. All rights reserverd.
+// Copyright (c) 2026, KaepTech. All rights reserved.
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Modules/ModuleManager.h"
 
-class FToolBarBuilder;
-class FMenuBuilder;
-
 class FSplatCaptureModule : public IModuleInterface
 {
 public:
+	// IModuleInterface
 
-	/** IModuleInterface implementation */
 	virtual void StartupModule() override;
 	virtual void ShutdownModule() override;
 
-	/** This function will be bound to Command. */
+private:
+	// Bound to the toolbar / menu command.
+
 	void PluginButtonClicked();
-
-private:
 	void RegisterMenus();
-	FName SplatTabID;
-	bool bIsWidgetOpen = false;
 
-private:
 	TSharedPtr<class FUICommandList> PluginCommands;
 };
-
-
-

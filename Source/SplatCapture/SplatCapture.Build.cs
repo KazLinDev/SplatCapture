@@ -1,4 +1,5 @@
-// Copyright (c) 2025, KazTech. All rights reserverd.
+// Copyright (c) 2026, KaepTech. All rights reserved.
+
 using UnrealBuildTool;
 using System.IO;
 
@@ -26,7 +27,7 @@ public class SplatCapture : ModuleRules
                 "NiagaraCore",
                 "MeshDescription",
                 "StaticMeshDescription"
-    }
+            }
         );
 
         PrivateDependencyModuleNames.AddRange(
@@ -42,10 +43,5 @@ public class SplatCapture : ModuleRules
                 "EditorScriptingUtilities"
             }
         );
-
-        if (Target.bBuildEditor)
-        {
-            PrivateDependencyModuleNames.Add("UnrealEd");
-        }
     }
 }

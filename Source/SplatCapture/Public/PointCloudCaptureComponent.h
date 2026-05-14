@@ -7,6 +7,7 @@
 
 class UBoxComponent;
 class UNiagaraComponent;
+class UCineCameraComponent;
 
 UCLASS(BlueprintType, Blueprintable, ClassGroup = "SplatCapture",
 	meta = (BlueprintSpawnableComponent, DisplayName = "Point Cloud Capture"))
@@ -17,7 +18,7 @@ class SPLATCAPTURE_API UPointCloudCaptureComponent : public UActorComponent
 public:
 	UPointCloudCaptureComponent();
 
-	// ── Configuration ──────────────────────────────────────────────────
+	// Sampling knobs.
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SplatCapture|PointCloud",
 		meta = (ClampMin = "1.0", UIMax = "10000.0"))
@@ -27,40 +28,51 @@ public:
 		meta = (ClampMin = "100", UIMax = "10000000"))
 	int32 MaxPoints = 1000000;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SplatCapture|PointCloud")
-	bool bPointsFromSurface = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SplatCapture|PointCloud")
-	bool bPointsFromTraces = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SplatCapture|PointCloud",
-		meta = (ClampMin = "10", UIMax = "500", EditCondition = "bPointsFromTraces"))
-	int32 TraceGridResolution = 100;
-
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SplatCapture|PointCloud",
 		meta = (ClampMin = "1.0", UIMax = "20.0"))
 	float MeshSizeFilterMultiplier = 5.0f;
 
-	// ── API ────────────────────────────────────────────────────────────
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SplatCapture|PointCloud",
+		meta = (ClampMin = "1", UIMax = "50000"))
+	int32 RaysPerCamera = 1000;
 
-	/** Samples all geometry inside the volume box. */
-	UFUNCTION(BlueprintCallable, Category = "SplatCapture|PointCloud")
-	void GeneratePointCloud(UBoxComponent* VolumeBox);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SplatCapture|PointCloud",
+		meta = (ClampMin = "1.0", UIMax = "1000000.0", ToolTip = "Max ray length in cm. 100000 = 1 km."))
+	float MaxTraceDistance = 100000.0f;
 
-	/** Exports as binary PLY file. */
+	// Niagara heatmap knobs.
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SplatCapture|Niagara",
+		meta = (ClampMin = "1.0", UIMax = "500.0", ToolTip = "Neighbor radius in cm. Each point counts other points inside this radius. Smaller = sharper. Larger = smoother."))
+	float HeatmapRadius = 25.0f;
+
+	// Generate Point the cloud. Resets first, then runs surface and/or camera passes.
+
+	UFUNCTION(BlueprintCallable, Category = "SplatCapture|PointCloud",
+		meta = (DisplayName = "Generate Point Cloud",
+				ToolTip = "Run surface sampling, camera tracing, or both. Resets cloud first. All tuning knobs live on the component."))
+	void GeneratePointCloud(
+		UBoxComponent* VolumeBox,
+		const TArray<FTransform>& CameraTransforms,
+		AActor* CameraActor,
+		bool bUseSurfaceSampling = true,
+		bool bUseCameraTracing = true);
+
+	// Save cloud as binary PLY.
 	UFUNCTION(BlueprintCallable, Category = "SplatCapture|PointCloud")
 	void ExportToPLY(const FString& SavePath);
 
-	/** Exports as COLMAP points3D.txt. */
+	//Save cloud as COLMAP points3D.txt.
 	UFUNCTION(BlueprintCallable, Category = "SplatCapture|PointCloud")
 	void ExportToPoints3D(const FString& SavePath);
 
-	/** Pushes positions into a Niagara system for visualization. */
+	// Push to Niagara for Previs
+
 	UFUNCTION(BlueprintCallable, Category = "SplatCapture|PointCloud")
 	void PushToNiagara(UNiagaraComponent* NiagaraComp);
 
-	/** DeacitvatesNiagara */
-	UFUNCTION(BlueprintCallable, Category = "SplatCapture")
+	// Stop Niagara and clear its arrays.
+	UFUNCTION(BlueprintCallable, Category = "SplatCapture|PointCloud")
 	void DeactivateNiagara(UNiagaraComponent* NiagaraComp);
 
 	UFUNCTION(BlueprintPure, Category = "SplatCapture|PointCloud")
@@ -69,11 +81,13 @@ public:
 private:
 	TArray<FVector> CapturedPositions;
 
+	// Both passes append into OutPositions. Camera pass reads UPROPERTY knobs directly.
+	void RunSurfaceSampling(UBoxComponent* VolumeBox, TArray<FVector>& OutPositions);
+	void RunCameraTracing(const TArray<FTransform>& CameraTransforms,
+		AActor* CameraActor,
+		TArray<FVector>& OutPositions);
+
 	void SampleMeshSurface(UStaticMeshComponent* MeshComp, int32 NumSamples,
 		TArray<FVector>& OutPositions);
-
 	float ComputeMeshSurfaceArea(UStaticMeshComponent* MeshComp);
-
-	void SampleByLineTraces(const FVector& BoxMin, const FVector& BoxMax,
-		TArray<FVector>& OutPositions);
 };

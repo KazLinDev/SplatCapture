@@ -68,7 +68,6 @@ Open your project in Unreal Engine, then go to:
 ## Important Notes
 
 - All meshes in the capture volume must have **collision enabled** for the occlusion checks to work correctly
-- The plugin module type is `UncookedOnly` — it is an editor-only tool and will not be included in packaged builds
 
 ---
 

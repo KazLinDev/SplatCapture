@@ -1,4 +1,4 @@
-// Copyright (c) 2025, KazTech. All rights reserverd.
+// Copyright (c) 2026, KaepTech. All rights reserved.
 
 #include "SplatCaptureCommands.h"
 
@@ -6,13 +6,7 @@
 
 void FSplatCaptureCommands::RegisterCommands()
 {
-	UI_COMMAND(PluginAction, "SplatCapture", "Execute SplatCapture action", EUserInterfaceActionType::Button, FInputChord());
+	UI_COMMAND(PluginAction, "SplatCapture", "Open the SplatCapture widget", EUserInterfaceActionType::Button, FInputChord());
 }
 
 #undef LOCTEXT_NAMESPACE
-
-
-
-
-
-
